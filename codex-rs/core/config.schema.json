@@ -2211,6 +2211,15 @@
           "description": "Enable animations (welcome screen, shimmer effects, spinners). Defaults to `true`.",
           "type": "boolean"
         },
+        "editor_mode": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/TuiEditorMode"
+            }
+          ],
+          "default": "default",
+          "description": "Editor keybinding mode for the chat composer.\n\n- `default` (default): current readline-style editing. - `vim`: vim-style insert/normal modes for the composer."
+        },
         "model_availability_nux": {
           "allOf": [
             {
@@ -2282,6 +2291,13 @@
         }
       },
       "type": "object"
+    },
+    "TuiEditorMode": {
+      "enum": [
+        "default",
+        "vim"
+      ],
+      "type": "string"
     },
     "UriBasedFileOpener": {
       "oneOf": [

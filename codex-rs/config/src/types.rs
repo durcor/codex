@@ -537,6 +537,14 @@ pub struct ModelAvailabilityNuxConfig {
 /// Fallback resize-reflow row cap when Codex cannot identify a terminal-specific scrollback size.
 pub const DEFAULT_TERMINAL_RESIZE_REFLOW_FALLBACK_MAX_ROWS: usize = 1_000;
 
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TuiEditorMode {
+    #[default]
+    Default,
+    Vim,
+}
+
 /// Collection of settings that are specific to the TUI.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default, JsonSchema)]
 #[schemars(deny_unknown_fields)]
@@ -587,6 +595,13 @@ pub struct Tui {
     /// Use `/theme` in the TUI or see `$CODEX_HOME/themes` for custom themes.
     #[serde(default)]
     pub theme: Option<String>,
+
+    /// Editor keybinding mode for the chat composer.
+    ///
+    /// - `default` (default): current readline-style editing.
+    /// - `vim`: vim-style insert/normal modes for the composer.
+    #[serde(default)]
+    pub editor_mode: TuiEditorMode,
 
     /// Startup tooltip availability NUX state persisted by the TUI.
     #[serde(default)]

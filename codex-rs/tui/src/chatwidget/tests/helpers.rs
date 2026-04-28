@@ -1,4 +1,5 @@
 use super::*;
+use codex_config::types::TuiEditorMode;
 use pretty_assertions::assert_eq;
 
 pub(super) async fn test_config() -> Config {
@@ -167,6 +168,7 @@ pub(super) async fn make_chatwidget_manual(
         disable_paste_burst: false,
         animations_enabled: cfg.animations,
         skills: None,
+        editor_mode: TuiEditorMode::Default,
     });
     bottom.set_collaboration_modes_enabled(/*enabled*/ true);
     let model_catalog = test_model_catalog(&cfg);

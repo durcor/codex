@@ -30,6 +30,7 @@ use crate::render::renderable::RenderableItem;
 use crate::tui::FrameRequester;
 use bottom_pane_view::BottomPaneView;
 use bottom_pane_view::ViewCompletion;
+use codex_config::types::TuiEditorMode;
 use codex_core_skills::model::SkillMetadata;
 use codex_features::Features;
 use codex_file_search::FileMatch;
@@ -231,6 +232,7 @@ pub(crate) struct BottomPaneParams {
     pub(crate) disable_paste_burst: bool,
     pub(crate) animations_enabled: bool,
     pub(crate) skills: Option<Vec<SkillMetadata>>,
+    pub(crate) editor_mode: TuiEditorMode,
 }
 
 impl BottomPane {
@@ -244,13 +246,18 @@ impl BottomPane {
             disable_paste_burst,
             animations_enabled,
             skills,
+            editor_mode,
         } = params;
-        let mut composer = ChatComposer::new(
+        let mut composer = ChatComposer::new_with_config(
             has_input_focus,
             app_event_tx.clone(),
             enhanced_keys_supported,
             placeholder_text,
             disable_paste_burst,
+            ChatComposerConfig {
+                editor_mode,
+                ..ChatComposerConfig::default()
+            },
         );
         composer.set_frame_requester(frame_requester.clone());
         composer.set_skill_mentions(skills);
@@ -1512,6 +1519,7 @@ mod tests {
             disable_paste_burst,
             animations_enabled: true,
             skills: Some(Vec::new()),
+            editor_mode: TuiEditorMode::Default,
         })
     }
 
@@ -1612,6 +1620,7 @@ mod tests {
             disable_paste_burst: true,
             animations_enabled: true,
             skills: Some(Vec::new()),
+            editor_mode: TuiEditorMode::Default,
         });
         pane.push_approval_request(exec_request(), &features);
         assert_eq!(CancellationEvent::Handled, pane.on_ctrl_c());
@@ -1632,6 +1641,7 @@ mod tests {
             disable_paste_burst: true,
             animations_enabled: true,
             skills: Some(Vec::new()),
+            editor_mode: TuiEditorMode::Default,
         });
         pane.insert_str("draft");
 
@@ -1660,6 +1670,7 @@ mod tests {
             disable_paste_burst: false,
             animations_enabled: true,
             skills: Some(Vec::new()),
+            editor_mode: TuiEditorMode::Default,
         });
 
         // Create an approval modal (active view).
@@ -1907,6 +1918,7 @@ mod tests {
             disable_paste_burst: false,
             animations_enabled: true,
             skills: Some(Vec::new()),
+            editor_mode: TuiEditorMode::Default,
         });
 
         // Start a running task so the status indicator is active above the composer.
@@ -1974,6 +1986,7 @@ mod tests {
             disable_paste_burst: false,
             animations_enabled: true,
             skills: Some(Vec::new()),
+            editor_mode: TuiEditorMode::Default,
         });
 
         // Begin a task: show initial status.
@@ -2001,6 +2014,7 @@ mod tests {
             disable_paste_burst: false,
             animations_enabled: true,
             skills: Some(Vec::new()),
+            editor_mode: TuiEditorMode::Default,
         });
 
         // Activate spinner (status view replaces composer) with no live ring.
@@ -2032,6 +2046,7 @@ mod tests {
             disable_paste_burst: false,
             animations_enabled: true,
             skills: Some(Vec::new()),
+            editor_mode: TuiEditorMode::Default,
         });
 
         pane.set_task_running(/*running*/ true);
@@ -2055,6 +2070,7 @@ mod tests {
             disable_paste_burst: false,
             animations_enabled: true,
             skills: Some(Vec::new()),
+            editor_mode: TuiEditorMode::Default,
         });
 
         pane.set_task_running(/*running*/ true);
@@ -2084,6 +2100,7 @@ mod tests {
             disable_paste_burst: false,
             animations_enabled: true,
             skills: Some(Vec::new()),
+            editor_mode: TuiEditorMode::Default,
         });
 
         pane.set_task_running(/*running*/ true);
@@ -2121,6 +2138,7 @@ mod tests {
             disable_paste_burst: false,
             animations_enabled: true,
             skills: Some(Vec::new()),
+            editor_mode: TuiEditorMode::Default,
         });
 
         pane.set_task_running(/*running*/ true);
@@ -2153,6 +2171,7 @@ mod tests {
             disable_paste_burst: false,
             animations_enabled: true,
             skills: Some(Vec::new()),
+            editor_mode: TuiEditorMode::Default,
         });
 
         pane.set_task_running(/*running*/ true);
@@ -2184,6 +2203,7 @@ mod tests {
             disable_paste_burst: false,
             animations_enabled: true,
             skills: Some(Vec::new()),
+            editor_mode: TuiEditorMode::Default,
         });
 
         pane.set_remote_image_urls(vec![
@@ -2213,6 +2233,7 @@ mod tests {
             disable_paste_burst: false,
             animations_enabled: true,
             skills: Some(Vec::new()),
+            editor_mode: TuiEditorMode::Default,
         });
 
         pane.set_remote_image_urls(vec!["https://example.com/one.png".to_string()]);
@@ -2245,6 +2266,7 @@ mod tests {
                 path_to_skills_md: test_path_buf("/tmp/test-skill/SKILL.md").abs(),
                 scope: SkillScope::User,
             }]),
+            editor_mode: TuiEditorMode::Default,
         });
 
         pane.set_task_running(/*running*/ true);
@@ -2283,6 +2305,7 @@ mod tests {
             disable_paste_burst: false,
             animations_enabled: true,
             skills: Some(Vec::new()),
+            editor_mode: TuiEditorMode::Default,
         });
 
         pane.set_task_running(/*running*/ true);
@@ -2318,6 +2341,7 @@ mod tests {
             disable_paste_burst: false,
             animations_enabled: true,
             skills: Some(Vec::new()),
+            editor_mode: TuiEditorMode::Default,
         });
 
         pane.set_task_running(/*running*/ true);
@@ -2354,6 +2378,7 @@ mod tests {
             disable_paste_burst: false,
             animations_enabled: true,
             skills: Some(Vec::new()),
+            editor_mode: TuiEditorMode::Default,
         });
 
         pane.set_task_running(/*running*/ true);
@@ -2402,6 +2427,7 @@ mod tests {
             disable_paste_burst: false,
             animations_enabled: true,
             skills: Some(Vec::new()),
+            editor_mode: TuiEditorMode::Default,
         });
 
         pane.set_task_running(/*running*/ true);
@@ -2458,6 +2484,7 @@ mod tests {
             disable_paste_burst: false,
             animations_enabled: true,
             skills: Some(Vec::new()),
+            editor_mode: TuiEditorMode::Default,
         });
 
         let on_ctrl_c_calls = Rc::new(Cell::new(0));
@@ -2506,6 +2533,7 @@ mod tests {
             disable_paste_burst: false,
             animations_enabled: true,
             skills: Some(Vec::new()),
+            editor_mode: TuiEditorMode::Default,
         });
 
         let handle_calls = Rc::new(Cell::new(0));
@@ -2584,6 +2612,7 @@ mod tests {
             disable_paste_burst: false,
             animations_enabled: true,
             skills: Some(Vec::new()),
+            editor_mode: TuiEditorMode::Default,
         });
 
         pane.set_composer_input_enabled(/*enabled*/ false, /*placeholder*/ None);

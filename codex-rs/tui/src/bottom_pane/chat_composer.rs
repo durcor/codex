@@ -190,14 +190,18 @@ use crate::render::RectExt;
 use crate::render::renderable::Renderable;
 use crate::slash_command::SlashCommand;
 use crate::style::user_message_style;
+use codex_config::types::TuiEditorMode;
 use codex_protocol::models::local_image_label_text;
 use codex_protocol::user_input::ByteRange;
 use codex_protocol::user_input::MAX_USER_INPUT_TEXT_CHARS;
 use codex_protocol::user_input::TextElement;
 
 mod history_search;
+mod vim_mode;
 
 use self::history_search::HistorySearchSession;
+use self::vim_mode::VimKeyAction;
+use self::vim_mode::VimState;
 use crate::app_event::AppEvent;
 use crate::app_event::ConnectorsSnapshot;
 use crate::app_event_sender::AppEventSender;
@@ -292,6 +296,8 @@ pub(crate) struct ChatComposerConfig {
     pub(crate) slash_commands_enabled: bool,
     /// Whether pasting a file path can attach local images.
     pub(crate) image_paste_enabled: bool,
+    /// Which keybinding mode the composer should use.
+    pub(crate) editor_mode: TuiEditorMode,
 }
 
 impl Default for ChatComposerConfig {
@@ -300,6 +306,7 @@ impl Default for ChatComposerConfig {
             popups_enabled: true,
             slash_commands_enabled: true,
             image_paste_enabled: true,
+            editor_mode: TuiEditorMode::Default,
         }
     }
 }
@@ -314,6 +321,7 @@ impl ChatComposerConfig {
             popups_enabled: false,
             slash_commands_enabled: false,
             image_paste_enabled: false,
+            editor_mode: TuiEditorMode::Default,
         }
     }
 }
@@ -390,6 +398,7 @@ pub(crate) struct ChatComposer {
     // Agent label injected into the footer's contextual row when multi-agent mode is active.
     active_agent_label: Option<String>,
     history_search: Option<HistorySearchSession>,
+    vim_state: VimState,
 }
 
 #[derive(Clone, Debug)]
@@ -549,6 +558,7 @@ impl ChatComposer {
             side_conversation_context_label: None,
             active_agent_label: None,
             history_search: None,
+            vim_state: VimState::new(config.editor_mode),
         };
         // Apply configuration via the setter to keep side-effects centralized.
         this.set_disable_paste_burst(disable_paste_burst);
@@ -1449,6 +1459,13 @@ impl ChatComposer {
             return self.begin_history_search();
         }
 
+        if self.active_popup_is_none()
+            && let Some(result) = self.handle_vim_key_event(key_event)
+        {
+            self.sync_popups();
+            return result;
+        }
+
         let result = match &mut self.active_popup {
             ActivePopup::Command(_) => self.handle_key_event_with_slash_popup(key_event),
             ActivePopup::File(_) => self.handle_key_event_with_file_popup(key_event),
@@ -1458,6 +1475,246 @@ impl ChatComposer {
         // Update (or hide/show) popup after processing the key.
         self.sync_popups();
         result
+    }
+
+    fn active_popup_is_none(&self) -> bool {
+        matches!(self.active_popup, ActivePopup::None)
+    }
+
+    fn handle_vim_key_event(&mut self, key_event: KeyEvent) -> Option<(InputResult, bool)> {
+        let action = self.vim_state.handle_key(key_event)?;
+
+        let result = match action {
+            VimKeyAction::NoOp | VimKeyAction::SwitchToNormal | VimKeyAction::SwitchToInsert => {
+                (InputResult::None, true)
+            }
+            VimKeyAction::InsertAtLineStart => {
+                self.textarea.set_cursor(self.textarea.current_line_start());
+                (InputResult::None, true)
+            }
+            VimKeyAction::Append => {
+                self.move_vim_cursor_right();
+                (InputResult::None, true)
+            }
+            VimKeyAction::AppendAtLineEnd => {
+                self.textarea.set_cursor(self.textarea.current_line_end());
+                (InputResult::None, true)
+            }
+            VimKeyAction::OpenBelow => {
+                self.open_line_below();
+                (InputResult::None, true)
+            }
+            VimKeyAction::OpenAbove => {
+                self.open_line_above();
+                (InputResult::None, true)
+            }
+            VimKeyAction::Submit => self.handle_submission(/*should_queue*/ false),
+            VimKeyAction::Queue => {
+                if !self.is_bang_shell_command() {
+                    self.handle_submission(self.is_task_running)
+                } else {
+                    (InputResult::None, true)
+                }
+            }
+            VimKeyAction::Move(motion) => {
+                self.apply_vim_motion(motion);
+                (InputResult::None, true)
+            }
+            VimKeyAction::DeleteChar => {
+                self.delete_vim_char();
+                (InputResult::None, true)
+            }
+            VimKeyAction::DeleteMotion(motion) => {
+                self.delete_vim_motion(motion);
+                (InputResult::None, true)
+            }
+            VimKeyAction::DeleteLine => {
+                self.delete_current_line();
+                (InputResult::None, true)
+            }
+            VimKeyAction::DeleteToEndOfLine => {
+                self.textarea.kill_to_end_of_line();
+                (InputResult::None, true)
+            }
+            VimKeyAction::ChangeMotion(motion) => {
+                self.delete_vim_motion(motion);
+                (InputResult::None, true)
+            }
+            VimKeyAction::ChangeLine => {
+                self.change_current_line();
+                (InputResult::None, true)
+            }
+            VimKeyAction::ChangeToEndOfLine => {
+                self.textarea.kill_to_end_of_line();
+                (InputResult::None, true)
+            }
+            VimKeyAction::YankMotion(motion) => {
+                self.yank_vim_motion(motion);
+                (InputResult::None, true)
+            }
+            VimKeyAction::YankLine => {
+                self.yank_current_line();
+                (InputResult::None, true)
+            }
+            VimKeyAction::PasteAfter => {
+                self.paste_after_cursor();
+                (InputResult::None, true)
+            }
+            VimKeyAction::PasteBefore => {
+                self.textarea.yank();
+                (InputResult::None, true)
+            }
+        };
+
+        Some(result)
+    }
+
+    fn move_vim_cursor_right(&mut self) {
+        if self.textarea.cursor() < self.textarea.text().len() {
+            self.textarea.move_cursor_right();
+        }
+    }
+
+    fn open_line_below(&mut self) {
+        let line_end = self.textarea.current_line_end();
+        let indent = self.current_line_indent();
+        let insert = format!("\n{indent}");
+        self.textarea.insert_str_at(line_end, &insert);
+        self.textarea.set_cursor(line_end + 1 + indent.len());
+    }
+
+    fn open_line_above(&mut self) {
+        let line_start = self.textarea.current_line_start();
+        let indent = self.current_line_indent();
+        let insert = format!("{indent}\n");
+        self.textarea.insert_str_at(line_start, &insert);
+        self.textarea.set_cursor(line_start + indent.len());
+    }
+
+    fn current_line_indent(&self) -> String {
+        let line = self.textarea.current_line_range();
+        self.textarea.text()[line]
+            .chars()
+            .take_while(|ch| ch.is_whitespace() && *ch != '\n')
+            .collect()
+    }
+
+    fn apply_vim_motion(&mut self, motion: self::vim_mode::VimMotion) {
+        let before = self.textarea.cursor();
+        let target = self::vim_mode::apply_motion(&self.textarea, motion);
+        self.textarea.set_cursor(target);
+        if before == self.textarea.cursor() {
+            self.handle_vim_history_fallback(motion);
+        }
+    }
+
+    fn handle_vim_history_fallback(&mut self, motion: self::vim_mode::VimMotion) {
+        let replace_entry = match motion {
+            self::vim_mode::VimMotion::Up if self.textarea.cursor() == 0 => {
+                self.history.navigate_up(&self.app_event_tx)
+            }
+            self::vim_mode::VimMotion::Down
+                if self.textarea.cursor() == self.textarea.text().len() =>
+            {
+                self.history.navigate_down(&self.app_event_tx)
+            }
+            _ => None,
+        };
+        if let Some(entry) = replace_entry {
+            self.apply_history_entry(entry);
+        }
+    }
+
+    fn vim_motion_range(&self, motion: self::vim_mode::VimMotion) -> Option<Range<usize>> {
+        let start = self.textarea.cursor();
+        let target = self::vim_mode::apply_motion(&self.textarea, motion);
+        if start == target {
+            return None;
+        }
+        Some(start.min(target)..start.max(target))
+    }
+
+    fn delete_vim_char(&mut self) {
+        self.textarea.delete_forward(/*n*/ 1);
+    }
+
+    fn delete_vim_motion(&mut self, motion: self::vim_mode::VimMotion) {
+        match motion {
+            self::vim_mode::VimMotion::Up | self::vim_mode::VimMotion::Down => {}
+            _ => {
+                if let Some(range) = self.vim_motion_range(motion) {
+                    self.textarea.copy_range(range.clone());
+                    self.textarea.replace_range(range, "");
+                }
+            }
+        }
+    }
+
+    fn delete_current_line(&mut self) {
+        let range = self.textarea.current_line_range_with_newline();
+        self.textarea.copy_range(range.clone());
+        self.textarea.replace_range(range, "");
+        let cursor = self
+            .textarea
+            .current_line_start()
+            .min(self.textarea.text().len());
+        self.textarea.set_cursor(cursor);
+    }
+
+    fn change_current_line(&mut self) {
+        let line_start = self.textarea.current_line_start();
+        let line_end = self.textarea.current_line_end();
+        self.textarea.copy_range(line_start..line_end);
+        self.textarea.replace_range(line_start..line_end, "");
+        self.textarea.set_cursor(line_start);
+    }
+
+    fn yank_vim_motion(&mut self, motion: self::vim_mode::VimMotion) {
+        if let Some(range) = self.vim_motion_range(motion) {
+            self.textarea.copy_range(range);
+        }
+    }
+
+    fn yank_current_line(&mut self) {
+        self.textarea
+            .copy_range(self.textarea.current_line_range_with_newline());
+    }
+
+    fn paste_after_cursor(&mut self) {
+        self.move_vim_cursor_right();
+        self.textarea.yank();
+    }
+
+    fn editor_mode_line(&self) -> Option<Line<'static>> {
+        self.vim_state.mode_line()
+    }
+
+    fn footer_right_line(
+        &self,
+        footer_props: &FooterProps,
+        status_line_active: bool,
+        show_cycle_hint: bool,
+    ) -> Option<Line<'static>> {
+        let editor_mode = self.editor_mode_line();
+        if status_line_active {
+            return editor_mode.or_else(|| {
+                mode_indicator_line(self.collaboration_mode_indicator, show_cycle_hint)
+            });
+        }
+
+        let context_line = context_window_line(
+            footer_props.context_window_percent,
+            footer_props.context_window_used_tokens,
+        );
+        if let Some(mut editor_mode) = editor_mode {
+            if !context_line.spans.is_empty() {
+                editor_mode.spans.push(" · ".dim());
+                editor_mode.spans.extend(context_line.spans);
+            }
+            Some(editor_mode)
+        } else {
+            Some(context_line)
+        }
     }
 
     /// Return true if either the slash-command popup or the file-search popup is active.
@@ -4291,11 +4548,29 @@ mod tests {
 
     use crate::bottom_pane::AppEventSender;
     use crate::bottom_pane::ChatComposer;
+    use crate::bottom_pane::ChatComposerConfig;
     use crate::bottom_pane::InputResult;
     use crate::bottom_pane::chat_composer::AttachedImage;
     use crate::bottom_pane::chat_composer::LARGE_PASTE_CHAR_THRESHOLD;
     use crate::bottom_pane::textarea::TextArea;
+    use codex_config::types::TuiEditorMode;
     use tokio::sync::mpsc::unbounded_channel;
+
+    fn vim_composer() -> ChatComposer {
+        let (tx, _rx) = unbounded_channel::<AppEvent>();
+        let sender = AppEventSender::new(tx);
+        ChatComposer::new_with_config(
+            /*has_input_focus*/ true,
+            sender,
+            /*enhanced_keys_supported*/ true,
+            "Ask Codex to do anything".to_string(),
+            /*disable_paste_burst*/ true,
+            ChatComposerConfig {
+                editor_mode: TuiEditorMode::Vim,
+                ..ChatComposerConfig::default()
+            },
+        )
+    }
 
     #[test]
     fn footer_hint_row_is_separated_from_composer() {
@@ -4522,6 +4797,26 @@ mod tests {
         insta::assert_snapshot!(name, terminal.backend());
     }
 
+    fn snapshot_vim_composer_state<F>(name: &str, setup: F)
+    where
+        F: FnOnce(&mut ChatComposer),
+    {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let mut composer = vim_composer();
+        setup(&mut composer);
+        let footer_props = composer.footer_props();
+        let footer_lines = footer_height(&footer_props);
+        let footer_spacing = ChatComposer::footer_spacing(footer_lines);
+        let height = footer_lines + footer_spacing + 8;
+        let mut terminal = Terminal::new(TestBackend::new(100, height)).unwrap();
+        terminal
+            .draw(|f| composer.render(f.area(), f.buffer_mut()))
+            .unwrap();
+        insta::assert_snapshot!(name, terminal.backend());
+    }
+
     #[test]
     fn footer_mode_snapshots() {
         use crossterm::event::KeyCode;
@@ -4623,6 +4918,11 @@ mod tests {
                     .handle_key_event(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE));
             },
         );
+
+        snapshot_vim_composer_state("footer_mode_vim_insert", |_| {});
+        snapshot_vim_composer_state("footer_mode_vim_normal", |composer| {
+            let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        });
 
         snapshot_composer_state(
             "footer_mode_shell_command_absorbs_bang",
@@ -4934,6 +5234,66 @@ mod tests {
                 composer.set_text_content("Test".to_string(), Vec::new(), Vec::new());
             },
         );
+    }
+
+    #[test]
+    fn vim_escape_enters_normal_and_i_reenters_insert() {
+        let mut composer = vim_composer();
+
+        let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!(
+            composer.vim_state.mode_line(),
+            Some(Line::from("NORMAL".cyan().bold()))
+        );
+
+        let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE));
+        assert_eq!(
+            composer.vim_state.mode_line(),
+            Some(Line::from("INSERT".green().bold()))
+        );
+    }
+
+    #[test]
+    fn vim_hjkl_moves_without_inserting_text() {
+        let mut composer = vim_composer();
+        composer.textarea.set_text_clearing_elements("alpha\nbeta");
+        composer.textarea.set_cursor("alpha\nbeta".len());
+
+        let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE));
+        let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE));
+
+        assert_eq!(composer.textarea.text(), "alpha\nbeta");
+        assert_eq!(composer.textarea.cursor(), 3);
+    }
+
+    #[test]
+    fn vim_dd_deletes_current_line() {
+        let mut composer = vim_composer();
+        composer
+            .textarea
+            .set_text_clearing_elements("first\nsecond\nthird");
+        composer.textarea.set_cursor("first\n".len());
+
+        let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE));
+        let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE));
+
+        assert_eq!(composer.textarea.text(), "first\nthird");
+        assert_eq!(composer.textarea.cursor(), "first\n".len());
+    }
+
+    #[test]
+    fn vim_o_opens_below_with_current_indent() {
+        let mut composer = vim_composer();
+        composer.textarea.set_text_clearing_elements("  first");
+        composer.textarea.set_cursor(/*pos*/ 0);
+
+        let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::NONE));
+        type_chars_humanlike(&mut composer, &['x']);
+
+        assert_eq!(composer.textarea.text(), "  first\n  x");
     }
 
     #[test]

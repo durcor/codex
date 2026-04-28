@@ -39,16 +39,26 @@
             inherit system;
             overlays = [ rust-overlay.overlays.default ];
           };
+          rustPlatform = pkgs.makeRustPlatform {
+            cargo = pkgs.rust-bin.stable.latest.minimal;
+            rustc = pkgs.rust-bin.stable.latest.minimal;
+          };
           codex-rs = pkgs.callPackage ./codex-rs {
             inherit version;
-            rustPlatform = pkgs.makeRustPlatform {
-              cargo = pkgs.rust-bin.stable.latest.minimal;
-              rustc = pkgs.rust-bin.stable.latest.minimal;
-            };
+            inherit rustPlatform;
+          };
+          codex-debug-client = pkgs.callPackage ./codex-rs {
+            inherit version rustPlatform;
+            packageName = "codex-debug-client";
+            binaryName = "codex-debug-client";
+            derivationName = "codex-debug-client";
+            description = "Interactive debug client for codex app-server";
+            enableRustyV8 = false;
           };
         in
         {
           codex-rs = codex-rs;
+          codex-debug-client = codex-debug-client;
           default = codex-rs;
         }
       );

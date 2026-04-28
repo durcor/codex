@@ -56,6 +56,10 @@ Codex can run a notification hook when the agent finishes a turn. See the config
 
 When Codex knows which client started the turn, the legacy notify JSON payload also includes a top-level `client` field. The TUI reports `codex-tui`, and the app server reports the `clientInfo.name` value from `initialize`.
 
+## TUI editor mode
+
+Set `tui.editor_mode = "vim"` in `~/.codex/config.toml` to enable vim-style insert/normal editing in the TUI composer. Leave it unset or set it to `"default"` to keep the existing readline-style editing behavior.
+
 ## JSON Schema
 
 The generated JSON Schema for `config.toml` lives at `codex-rs/core/config.schema.json`.

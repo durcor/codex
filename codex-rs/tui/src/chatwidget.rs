@@ -5519,6 +5519,7 @@ impl ChatWidget {
                 disable_paste_burst: config.disable_paste_burst,
                 animations_enabled: config.animations,
                 skills: None,
+                editor_mode: config.tui_editor_mode,
             }),
             active_cell,
             active_cell_revision: 0,

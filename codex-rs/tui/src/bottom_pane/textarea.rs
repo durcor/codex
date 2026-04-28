@@ -313,6 +313,38 @@ impl TextArea {
         self.end_of_line(self.cursor_pos)
     }
 
+    pub(crate) fn current_line_start(&self) -> usize {
+        self.beginning_of_current_line()
+    }
+
+    pub(crate) fn current_line_end(&self) -> usize {
+        self.end_of_current_line()
+    }
+
+    pub(crate) fn current_line_range(&self) -> Range<usize> {
+        let start = self.current_line_start();
+        start..self.current_line_end()
+    }
+
+    pub(crate) fn current_line_range_with_newline(&self) -> Range<usize> {
+        let start = self.current_line_start();
+        let end = self.current_line_end();
+        if end < self.text.len() {
+            start..end + 1
+        } else {
+            start..end
+        }
+    }
+
+    pub(crate) fn first_non_blank_of_current_line(&self) -> usize {
+        let start = self.current_line_start();
+        let end = self.current_line_end();
+        self.text[start..end]
+            .char_indices()
+            .find(|(_, ch)| !ch.is_whitespace())
+            .map_or(start, |(idx, _)| start + idx)
+    }
+
     pub fn input(&mut self, event: KeyEvent) {
         // Only process key presses or repeats; ignore releases to avoid inserting
         // characters on key-up events when modifiers are no longer reported.
@@ -666,6 +698,14 @@ impl TextArea {
 
         self.kill_buffer = removed;
         self.replace_range_raw(range, "");
+    }
+
+    pub(crate) fn copy_range(&mut self, range: Range<usize>) {
+        let range = self.expand_range_to_element_boundaries(range);
+        if range.start >= range.end {
+            return;
+        }
+        self.kill_buffer = self.text[range].to_string();
     }
 
     /// Move the cursor left by a single grapheme cluster.
@@ -1266,6 +1306,29 @@ impl TextArea {
         }
 
         self.adjust_pos_out_of_elements(start, /*prefer_start*/ true)
+    }
+
+    pub(crate) fn start_of_next_word(&self) -> usize {
+        let suffix = &self.text[self.cursor_pos..];
+        if suffix.is_empty() {
+            return self.text.len();
+        }
+
+        if suffix.chars().next().is_some_and(char::is_whitespace) {
+            let next = suffix
+                .char_indices()
+                .find(|(_, ch)| !ch.is_whitespace())
+                .map_or(self.text.len(), |(idx, _)| self.cursor_pos + idx);
+            return self.adjust_pos_out_of_elements(next, /*prefer_start*/ true);
+        }
+
+        let current_end = self.end_of_next_word();
+        let rest = &self.text[current_end..];
+        let next = rest
+            .char_indices()
+            .find(|(_, ch)| !ch.is_whitespace())
+            .map_or(self.text.len(), |(idx, _)| current_end + idx);
+        self.adjust_pos_out_of_elements(next, /*prefer_start*/ true)
     }
 
     pub(crate) fn end_of_next_word(&self) -> usize {
